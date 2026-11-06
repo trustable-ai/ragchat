@@ -133,7 +133,7 @@ def ragchat(args):
 
     if not rows:
         return {
-            "output": "No matching documents found for your query.",
+            "output": f"No matching documents found. Debug: query={query!r}, categoria={categoria!r}, pg_ok=True",
             "sources": [],
             "num_chunks_used": 0,
         }
