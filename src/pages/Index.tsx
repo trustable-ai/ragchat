@@ -235,10 +235,8 @@ const Index = () => {
   /* ================================================================ */
 
   const fetchIndexedDocs = useCallback(async (cat: string) => {
-    if (!cat) {
-      setIndexedDocs([]);
-      return;
-    }
+    // cat === "" means "All"; the backend returns every document when
+    // categoria is empty, so we still need to fetch.
     setDocsLoading(true);
     try {
       const res = await fetch("/api/my/rag/documents", {
