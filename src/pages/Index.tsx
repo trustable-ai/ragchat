@@ -1051,7 +1051,7 @@ const Index = () => {
     <div className="flex h-screen flex-col bg-background">
       {/* Title + Tabs */}
       <header className="border-b">
-        <div className="flex items-center justify-center px-4 pt-3 pb-0">
+        <div className="flex items-center justify-end px-4 pt-3 pb-0">
           <h1 className="text-xl font-semibold text-foreground">RAG Document System</h1>
         </div>
         <div className="flex justify-center gap-0 px-4">

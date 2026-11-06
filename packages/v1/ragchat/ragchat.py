@@ -128,8 +128,6 @@ def ragchat(args):
     top_k = int(args.get("top_k", 15))
     history = args.get("messages", args.get("history", []))
 
-    print(f"DEBUG ragchat: query={query!r} categoria={categoria!r} keys={list(args.keys())}")
-
     if not query:
         return {"ok": False, "error": "input (question) is required"}
 
@@ -154,7 +152,7 @@ def ragchat(args):
 
     if not rows:
         return {
-            "output": f"No matching documents found. Debug: query={query!r}, categoria={categoria!r}, pg_ok=True",
+            "output": "No matching documents found for your query.",
             "sources": [],
             "num_chunks_used": 0,
         }
