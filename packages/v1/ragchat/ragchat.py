@@ -108,13 +108,35 @@ def collect_sources(rows, min_score=0.01):
     return sources
 
 
+def list_documents(conn):
+    """List distinct ingested documents with categoria and chunk count."""
+    sql = """
+        SELECT filename, categoria, COUNT(*) AS chunks, MAX(created_at) AS last
+        FROM rag_documents
+        GROUP BY filename, categoria
+        ORDER BY filename
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+    docs = []
+    for row in rows:
+        docs.append({
+            "filename": row[0],
+            "categoria": row[1],
+            "chunks": row[2],
+            "last_ingested": row[3].isoformat() if row[3] else None,
+        })
+    return docs
+
+
 def ragchat(args):
     """
     RAG Chat: search documents then generate LLM response.
 
     Args:
         args: dict with:
-            - input: user question (required)
+            - input: user question (required); "all" lists ingested documents
             - categoria: filter by category (optional)
             - top_k: max chunks to retrieve (default 15)
             - history: conversation history [{role, content}, ...] (optional)
@@ -128,12 +150,32 @@ def ragchat(args):
     top_k = int(args.get("top_k", 15))
     history = args.get("messages", args.get("history", []))
 
-    if not query:
-        return {"ok": False, "error": "input (question) is required"}
-
     postgres_url = args.get("POSTGRES_URL")
     if not postgres_url:
         return {"ok": False, "error": "POSTGRES_URL not configured"}
+
+    # "all": list ingested documents (no LLM call needed)
+    if query.lower() == "all":
+        try:
+            with psycopg.connect(postgres_url) as conn:
+                ensure_table(conn)
+                docs = list_documents(conn)
+        except Exception as e:
+            return {"ok": False, "error": f"Database error: {e}"}
+        if not docs:
+            return {"output": "No documents ingested yet.", "documents": [], "count": 0}
+        lines = [f"Ingested documents ({len(docs)}):"]
+        for d in docs:
+            cat = f" [{d['categoria']}]" if d["categoria"] else ""
+            lines.append(f"- {d['filename']}{cat} ({d['chunks']} chunks)")
+        return {
+            "output": "\n".join(lines),
+            "documents": docs,
+            "count": len(docs),
+        }
+
+    if not query:
+        return {"ok": False, "error": "input (question) is required"}
 
     ai_base_url = args.get("AI_BASE_URL")
     ai_api_key = args.get("AI_API_KEY")
