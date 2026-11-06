@@ -1051,7 +1051,7 @@ const Index = () => {
     <div className="flex h-screen flex-col bg-background">
       {/* Title + Tabs */}
       <header className="border-b">
-        <div className="flex items-center justify-end px-4 pt-3 pb-0">
+        <div className="flex items-center justify-start px-4 pt-3 pb-0">
           <h1 className="text-xl font-semibold text-foreground">RAG Document System</h1>
         </div>
         <div className="flex justify-center gap-0 px-4">
@@ -1059,7 +1059,7 @@ const Index = () => {
             onClick={() => setActiveTab("ingest")}
             className={`px-6 py-2 text-sm font-medium transition-colors border-b-2 ${
               activeTab === "ingest"
-                ? "border-blue-600 text-blue-600"
+                ? "border-orange-600 text-orange-600"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -1069,7 +1069,7 @@ const Index = () => {
             onClick={() => setActiveTab("chat")}
             className={`px-6 py-2 text-sm font-medium transition-colors border-b-2 ${
               activeTab === "chat"
-                ? "border-blue-600 text-blue-600"
+                ? "border-orange-600 text-orange-600"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
