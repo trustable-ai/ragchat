@@ -44,19 +44,40 @@ def ensure_table(conn):
 
 
 def fulltext_search(conn, query, categoria="", top_k=15):
-    """Run fulltext search and return ranked results."""
+    """Run fulltext search with OR logic and ILIKE fallback."""
+    # Build OR query: split words, join with |
+    words = query.split()
+    or_query = " | ".join(words)
+
     sql = """
         SELECT filename, categoria, doc_id, chunk_index, content,
-               ts_rank(content_tsv, plainto_tsquery('english', %s)) AS rank
+               ts_rank(content_tsv, to_tsquery('english', %s)) AS rank
         FROM rag_documents
-        WHERE content_tsv @@ plainto_tsquery('english', %s)
+        WHERE content_tsv @@ to_tsquery('english', %s)
         AND (categoria = %s OR %s = '')
         ORDER BY rank DESC
         LIMIT %s
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (query, query, categoria, categoria, top_k))
-        return cur.fetchall()
+        cur.execute(sql, (or_query, or_query, categoria, categoria, top_k))
+        rows = cur.fetchall()
+
+    # Fallback: ILIKE if fulltext finds nothing
+    if not rows:
+        like_pattern = "%" + "%".join(words) + "%"
+        sql2 = """
+            SELECT filename, categoria, doc_id, chunk_index, content, 0.5 AS rank
+            FROM rag_documents
+            WHERE content ILIKE %s
+            AND (categoria = %s OR %s = '')
+            ORDER BY created_at DESC
+            LIMIT %s
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql2, (like_pattern, categoria, categoria, top_k))
+            rows = cur.fetchall()
+
+    return rows
 
 
 def build_context(rows):

@@ -58,19 +58,38 @@ def search(args):
         with psycopg.connect(postgres_url) as conn:
             ensure_table(conn)
 
+            # OR logic: split words, join with |
+            words = query.split()
+            or_query = " | ".join(words)
+
             sql = """
                 SELECT filename, categoria, doc_id, chunk_index, content,
-                       ts_rank(content_tsv, plainto_tsquery('english', %s)) AS rank
+                       ts_rank(content_tsv, to_tsquery('english', %s)) AS rank
                 FROM rag_documents
-                WHERE content_tsv @@ plainto_tsquery('english', %s)
+                WHERE content_tsv @@ to_tsquery('english', %s)
                 AND (categoria = %s OR %s = '')
                 ORDER BY rank DESC
                 LIMIT %s
             """
 
             with conn.cursor() as cur:
-                cur.execute(sql, (query, query, categoria, categoria, top_k))
+                cur.execute(sql, (or_query, or_query, categoria, categoria, top_k))
                 rows = cur.fetchall()
+
+            # Fallback: ILIKE if fulltext finds nothing
+            if not rows:
+                like_pattern = "%" + "%".join(words) + "%"
+                sql2 = """
+                    SELECT filename, categoria, doc_id, chunk_index, content, 0.5 AS rank
+                    FROM rag_documents
+                    WHERE content ILIKE %s
+                    AND (categoria = %s OR %s = '')
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """
+                with conn.cursor() as cur:
+                    cur.execute(sql2, (like_pattern, categoria, categoria, top_k))
+                    rows = cur.fetchall()
 
             results = []
             for row in rows:
