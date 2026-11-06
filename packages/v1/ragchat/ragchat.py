@@ -105,7 +105,9 @@ def ragchat(args):
     query = args.get("input", "").strip()
     categoria = args.get("categoria", "").strip()
     top_k = int(args.get("top_k", 15))
-    history = args.get("history", [])
+    history = args.get("messages", args.get("history", []))
+
+    print(f"DEBUG ragchat: query={query!r} categoria={categoria!r} keys={list(args.keys())}")
 
     if not query:
         return {"ok": False, "error": "input (question) is required"}
