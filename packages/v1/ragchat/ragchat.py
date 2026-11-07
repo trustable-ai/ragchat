@@ -152,9 +152,10 @@ def main(args, ctx=None):
     if not query:
         return {"ok": False, "error": "input (question) is required"}
 
-    ai_base_url = args.get("AI_BASE_URL")
-    ai_api_key = args.get("AI_API_KEY")
-    ai_model = args.get("AI_CHAT_MODEL")
+    # AI credentials from builder context (secret bindings), with args fallback
+    ai_base_url = getattr(ctx, "AI_BASE_URL", None) or args.get("AI_BASE_URL")
+    ai_api_key = getattr(ctx, "AI_API_KEY", None) or args.get("AI_API_KEY")
+    ai_model = getattr(ctx, "AI_CHAT_MODEL", None) or args.get("AI_CHAT_MODEL")
 
     if not ai_base_url or not ai_api_key or not ai_model:
         return {"ok": False, "error": "AI_BASE_URL, AI_API_KEY, and AI_CHAT_MODEL are required"}

@@ -6,6 +6,27 @@ import types, os, ragchat
 
 builder = []
 ## build-context ##
+#--param AI_CHAT_MODEL "$AI_CHAT_MODEL"
+def init_ai_chat_model(args, ctx):
+  value = args.get("AI_CHAT_MODEL") or os.getenv("AI_CHAT_MODEL")
+  if not value:
+    raise RuntimeError("Required secret AI_CHAT_MODEL is not configured")
+  setattr(ctx, "AI_CHAT_MODEL", value)
+builder.append(init_ai_chat_model)
+#--param AI_API_KEY "$AI_API_KEY"
+def init_ai_api_key(args, ctx):
+  value = args.get("AI_API_KEY") or os.getenv("AI_API_KEY")
+  if not value:
+    raise RuntimeError("Required secret AI_API_KEY is not configured")
+  setattr(ctx, "AI_API_KEY", value)
+builder.append(init_ai_api_key)
+#--param AI_BASE_URL "$AI_BASE_URL"
+def init_ai_base_url(args, ctx):
+  value = args.get("AI_BASE_URL") or os.getenv("AI_BASE_URL")
+  if not value:
+    raise RuntimeError("Required secret AI_BASE_URL is not configured")
+  setattr(ctx, "AI_BASE_URL", value)
+builder.append(init_ai_base_url)
 #--param POSTGRES_URL "$POSTGRES_URL"
 import psycopg
 def init_postgresql(args, ctx):
