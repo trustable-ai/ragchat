@@ -1,6 +1,7 @@
 """
 Fulltext search over RAG documents in Postgres using ts_rank.
 """
+# re-zip trigger
 import psycopg
 
 

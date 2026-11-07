@@ -2,6 +2,7 @@
 Manage RAG document categories in Postgres.
 Actions: list, add, delete, rename.
 """
+# re-zip trigger
 import psycopg
 
 
