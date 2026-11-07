@@ -1,25 +1,30 @@
-import os
-import boto3
-import requests
-import base64
+"""
+Ingest a PDF, upload to S3, extract text using Tika, and store result back to S3.
 
-def ingest(args):
+Uses ctx.S3_CLIENT / ctx.S3_DATA (Trustant builder pattern). No manual boto3
+client creation or credential reading.
+"""
+import base64
+import re
+import requests
+
+
+def main(args, ctx=None):
     """
     Ingest a PDF, upload to S3, extract text using Tika, and store result back to S3.
 
     Args:
-        args: dict with 'filename' (S3 key), 'fileContent' (base64) and S3 credentials
+        args: dict with 'filename' (S3 key), 'fileContent' (base64), or 'parts' (list of S3 keys)
+        ctx: builder context with ctx.S3_CLIENT and ctx.S3_DATA
 
     Returns:
         dict with 'output' containing the extracted text and signed URL
     """
-    # Get S3 configuration
-    host = args.get("S3_HOST", os.getenv("S3_HOST"))
-    port = args.get("S3_PORT", os.getenv("S3_PORT"))
-    s3_url = f"http://{host}:{port}"
-    access_key = args.get("S3_ACCESS_KEY", os.getenv("S3_ACCESS_KEY"))
-    secret_key = args.get("S3_SECRET_KEY", os.getenv("S3_SECRET_KEY"))
-    bucket = args.get("S3_BUCKET_DATA", os.getenv("S3_BUCKET_DATA"))
+    if not ctx or not hasattr(ctx, "S3_CLIENT") or ctx.S3_CLIENT is None:
+        return {"error": "S3 non configurato"}
+
+    client = ctx.S3_CLIENT
+    bucket = getattr(ctx, "S3_DATA", None)
 
     # Get filename and file content from input.
     # `parts` (list of S3 keys) is used when the browser chunked the file
@@ -32,21 +37,12 @@ def ingest(args):
     if not filename and not parts:
         return {"error": "filename parameter is required"}
 
-    # Initialize S3 client
-    s3_client = boto3.client(
-        's3',
-        region_name='us-east-1',
-        endpoint_url=s3_url,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key
-    )
-
     try:
         if file_content_b64:
             # Legacy small-file path: PDF sent inline as base64 in the request body.
             pdf_content = base64.b64decode(file_content_b64)
             # Upload PDF to S3 so it is stored alongside the extracted text
-            s3_client.put_object(
+            client.put_object(
                 Bucket=bucket,
                 Key=filename,
                 Body=pdf_content,
@@ -57,14 +53,14 @@ def ingest(args):
             # S3 object via rag/upload. Read and concatenate them in order.
             pieces = []
             for key in parts:
-                obj = s3_client.get_object(Bucket=bucket, Key=key)
+                obj = client.get_object(Bucket=bucket, Key=key)
                 pieces.append(obj['Body'].read())
             pdf_content = b"".join(pieces)
             if not pdf_content:
                 return {"error": "uploaded file is empty"}
             # Persist the reassembled PDF so it lives alongside the extracted text.
             if filename:
-                s3_client.put_object(
+                client.put_object(
                     Bucket=bucket,
                     Key=filename,
                     Body=pdf_content,
@@ -72,7 +68,7 @@ def ingest(args):
                 )
         else:
             # Single-key read: the browser uploaded the whole PDF to S3 already.
-            obj = s3_client.get_object(Bucket=bucket, Key=filename)
+            obj = client.get_object(Bucket=bucket, Key=filename)
             pdf_content = obj['Body'].read()
             if not pdf_content:
                 return {"error": "uploaded file is empty"}
@@ -94,12 +90,11 @@ def ingest(args):
         # Store extracted text back to S3
         base_name = (filename or (parts[0] if parts else "output"))
         # Strip a trailing .partN chunk suffix so the output name is clean.
-        import re
         base_name = re.sub(r'\.part\d+$', '', base_name)
         output_filename = base_name.replace('.pdf', '_extracted.txt')
         if output_filename == base_name:
             output_filename = base_name + '_extracted.txt'
-        s3_client.put_object(
+        client.put_object(
             Bucket=bucket,
             Key=output_filename,
             Body=extracted_text.encode('utf-8'),
@@ -107,7 +102,7 @@ def ingest(args):
         )
 
         # Generate signed URL for the extracted text (expires in 1 hour)
-        signed_url = s3_client.generate_presigned_url(
+        signed_url = client.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': output_filename},
             ExpiresIn=3600

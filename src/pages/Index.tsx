@@ -261,7 +261,7 @@ const Index = () => {
 
   const deleteDoc = async (doc: IndexedDoc) => {
     try {
-      const res = await fetch("/api/my/rag/delete_doc", {
+      const res = await fetch("/api/my/rag/delete-doc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ doc_id: doc.doc_id, filename: doc.filename }),

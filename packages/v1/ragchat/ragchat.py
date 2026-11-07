@@ -1,28 +1,11 @@
 """
 RAG Chat: Postgres fulltext search + LLM response generation.
+
+Uses ctx.POSTGRESQL. Schema (rag_documents) is owned by setup/database.
 """
 # re-zip trigger
-import psycopg
 from openai import OpenAI
 
-
-DDL = """
-CREATE TABLE IF NOT EXISTS rag_documents (
-    id SERIAL PRIMARY KEY,
-    filename TEXT NOT NULL,
-    categoria TEXT NOT NULL DEFAULT '',
-    doc_id TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL DEFAULT 0,
-    total_chunks INTEGER NOT NULL DEFAULT 0,
-    content TEXT NOT NULL,
-    content_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_rag_docs_tsv ON rag_documents USING GIN(content_tsv);
-CREATE INDEX IF NOT EXISTS idx_rag_docs_categoria ON rag_documents(categoria);
-CREATE INDEX IF NOT EXISTS idx_rag_docs_doc_id ON rag_documents(doc_id);
-CREATE INDEX IF NOT EXISTS idx_rag_docs_filename ON rag_documents(filename);
-"""
 
 SYSTEM_PROMPT = """You are an intelligent document assistant. Answer questions based EXCLUSIVELY on the context provided.
 
@@ -38,15 +21,8 @@ Rules:
 - Be concise and direct — answer first, then details"""
 
 
-def ensure_table(conn):
-    with conn.cursor() as cur:
-        cur.execute(DDL)
-    conn.commit()
-
-
 def fulltext_search(conn, query, categoria="", top_k=15):
     """Run fulltext search with OR logic and ILIKE fallback."""
-    # Build OR query: split words, join with |
     words = query.split()
     or_query = " | ".join(words)
 
@@ -131,7 +107,7 @@ def list_documents(conn):
     return docs
 
 
-def ragchat(args):
+def main(args, ctx=None):
     """
     RAG Chat: search documents then generate LLM response.
 
@@ -141,26 +117,24 @@ def ragchat(args):
             - categoria: filter by category (optional)
             - top_k: max chunks to retrieve (default 15)
             - history: conversation history [{role, content}, ...] (optional)
-            - POSTGRES_URL: connection string
             - AI_BASE_URL: LLM API base URL
             - AI_API_KEY: LLM API key
             - AI_CHAT_MODEL: LLM model name
     """
+    if not ctx or not hasattr(ctx, "POSTGRESQL") or ctx.POSTGRESQL is None:
+        return {"ok": False, "error": "Database not configured"}
+
     query = args.get("input", "").strip()
     categoria = args.get("categoria", "").strip()
     top_k = int(args.get("top_k", 15))
     history = args.get("messages", args.get("history", []))
 
-    postgres_url = args.get("POSTGRES_URL")
-    if not postgres_url:
-        return {"ok": False, "error": "POSTGRES_URL not configured"}
+    conn = ctx.POSTGRESQL
 
     # "all": list ingested documents (no LLM call needed)
     if query.lower() == "all":
         try:
-            with psycopg.connect(postgres_url) as conn:
-                ensure_table(conn)
-                docs = list_documents(conn)
+            docs = list_documents(conn)
         except Exception as e:
             return {"ok": False, "error": f"Database error: {e}"}
         if not docs:
@@ -187,9 +161,7 @@ def ragchat(args):
 
     # --- Search ---
     try:
-        with psycopg.connect(postgres_url) as conn:
-            ensure_table(conn)
-            rows = fulltext_search(conn, query, categoria, top_k)
+        rows = fulltext_search(conn, query, categoria, top_k)
     except Exception as e:
         return {"ok": False, "error": f"Database error: {e}"}
 
