@@ -973,7 +973,7 @@ const Index = () => {
                           <span>{q.question}</span>
                           <span className="text-xs text-muted-foreground">{q.filename.replace(/\.pdf$/, "").replace(/^[A-Za-z]+_/, "")}</span>
                         </button>
-                      ))}}
+                      ))}
                     </div>
                   )}
                 </div>
