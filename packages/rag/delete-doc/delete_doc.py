@@ -33,6 +33,11 @@ def main(args, ctx=None):
                 (doc_id, filename),
             )
             deleted = cur.rowcount
+            # Cascade: remove suggested questions for the same document.
+            cur.execute(
+                "DELETE FROM rag_suggested_questions WHERE doc_id = %s OR filename = %s",
+                (doc_id, filename),
+            )
         conn.commit()
         return {"ok": True, "deleted": deleted}
     except Exception as e:

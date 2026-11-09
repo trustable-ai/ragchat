@@ -135,6 +135,8 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [chatCategory, setChatCategory] = useState("All");
   const [chatDocuments, setChatDocuments] = useState<DocInfo[]>([]);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -463,6 +465,39 @@ const Index = () => {
     };
     loadChatDocuments();
   }, [chatCategory]);
+
+  /* ================================================================ */
+  /*  Chat: Suggested questions                                       */
+  /* ================================================================ */
+
+  useEffect(() => {
+    const loadSuggested = async () => {
+      if (chatCategory === "All" || chatDocuments.length === 0) {
+        setSuggestedQuestions([]);
+        return;
+      }
+      setQuestionsLoading(true);
+      try {
+        const res = await fetch("/api/my/rag/questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoria: chatCategory, max: 5 }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const qs = (data.questions || []).map((q: any) => q.question);
+          setSuggestedQuestions(qs);
+        } else {
+          setSuggestedQuestions([]);
+        }
+      } catch {
+        setSuggestedQuestions([]);
+      } finally {
+        setQuestionsLoading(false);
+      }
+    };
+    loadSuggested();
+  }, [chatCategory, chatDocuments]);
 
   /* ================================================================ */
   /*  Chat: Send message                                              */
@@ -906,7 +941,7 @@ const Index = () => {
       <div className="flex-1 overflow-y-auto p-4">
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
-            <div className="text-center text-muted-foreground">
+            <div className="text-center text-muted-foreground max-w-md">
               <p className="text-lg font-semibold">RAG Chat</p>
               <p className="text-sm">
                 Select a category and ask questions about your documents
@@ -915,6 +950,31 @@ const Index = () => {
                 <p className="mt-4 text-sm text-orange-500 font-medium">
                   No documents indexed for this category.
                 </p>
+              )}
+              {chatCategory !== "All" && chatDocuments.length > 0 && (
+                <div className="mt-6 space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Suggested questions:
+                  </p>
+                  {questionsLoading ? (
+                    <div className="flex items-center justify-center gap-2 text-sm">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {suggestedQuestions.map((q, i) => (
+                        <button
+                          key={i}
+                          onClick={() => sendMessage(q)}
+                          className="rounded-full border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

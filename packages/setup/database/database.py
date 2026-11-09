@@ -68,6 +68,20 @@ CREATE TABLE IF NOT EXISTS rag_categories (
 );
 """
 
+RAG_SUGGESTED_QUESTIONS_DDL = """
+CREATE TABLE IF NOT EXISTS rag_suggested_questions (
+    id SERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    categoria TEXT NOT NULL DEFAULT '',
+    doc_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rag_sq_categoria ON rag_suggested_questions(categoria);
+CREATE INDEX IF NOT EXISTS idx_rag_sq_doc_id ON rag_suggested_questions(doc_id);
+CREATE INDEX IF NOT EXISTS idx_rag_sq_filename ON rag_suggested_questions(filename);
+"""
+
 
 def main(args, ctx=None):
     if not ctx or not hasattr(ctx, "POSTGRESQL") or ctx.POSTGRESQL is None:
@@ -80,6 +94,7 @@ def main(args, ctx=None):
             cur.execute(RAG_DOCUMENTS_DDL)
             cur.execute(RAG_TRGM_DDL)
             cur.execute(RAG_CATEGORIES_DDL)
+            cur.execute(RAG_SUGGESTED_QUESTIONS_DDL)
 
             # Migrate tsvector config 'english' -> 'simple' if needed.
             cur.execute(RAG_TSV_NEEDS_MIGRATION_SQL)
@@ -96,7 +111,7 @@ def main(args, ctx=None):
 
     result = {
         "ok": True,
-        "tables": ["rag_documents", "rag_categories"],
+        "tables": ["rag_documents", "rag_categories", "rag_suggested_questions"],
         "extensions": ["pg_trgm"],
         "fts_config": "simple",
     }

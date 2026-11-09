@@ -131,6 +131,50 @@ by document-id ordering).
 counts for the top 5 hits, for ranking diagnostics. It does not change
 behavior.
 
+## Suggested questions (`rag/questions`)
+
+The app generates suggested questions per category to help users start a
+conversation. Questions are generated lazily via LLM on first access and cached
+in `rag_suggested_questions` (linked to the document, so `rag/delete-doc`
+cascades the cleanup).
+
+### Schema
+
+```sql
+CREATE TABLE rag_suggested_questions (
+    id SERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    categoria TEXT NOT NULL DEFAULT '',
+    doc_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Generation flow
+
+1. Frontend calls `rag/questions` with a `categoria`.
+2. The action finds documents in that category without cached questions.
+3. For each, it sends the first chunk (capped at 1500 chars) to the LLM with
+   a prompt asking for 3 concise, answerable questions.
+4. Generated questions are saved in `rag_suggested_questions`.
+5. The action returns the top-`max` (default 5) cached questions for the
+   category.
+
+If the LLM call fails (rate limit, timeout, missing credentials), a
+deterministic fallback is used (filename-based: "What are the key details in
+<X>?"). This ensures the endpoint always returns something useful.
+
+A `regenerate=true` parameter forces regeneration (deletes cached questions
+for the category and regenerates). A `time.sleep(1)` rate-limits between LLM
+calls to avoid 429 errors.
+
+### Frontend
+
+In the chat empty state, when a specific category is selected (not "All") and
+the category has indexed documents, the frontend fetches suggested questions
+and renders them as clickable chips. Clicking a chip sends it as a message.
+
 ## Language note
 
 The `'simple'` config is the tradeoff chosen for mixed-language corpora. It
