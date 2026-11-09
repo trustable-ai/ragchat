@@ -135,7 +135,7 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [chatCategory, setChatCategory] = useState("All");
   const [chatDocuments, setChatDocuments] = useState<DocInfo[]>([]);
-  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<{ question: string; filename: string }[]>([]);
   const [questionsLoading, setQuestionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -481,11 +481,11 @@ const Index = () => {
         const res = await fetch("/api/my/rag/questions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ categoria: chatCategory, max: 5 }),
+          body: JSON.stringify({ categoria: chatCategory, max: 3 }),
         });
         if (res.ok) {
           const data = await res.json();
-          const qs = (data.questions || []).map((q: any) => q.question);
+          const qs = (data.questions || []).map((q: any) => ({ question: q.question, filename: q.filename }));
           setSuggestedQuestions(qs);
         } else {
           setSuggestedQuestions([]);
@@ -966,12 +966,14 @@ const Index = () => {
                       {suggestedQuestions.map((q, i) => (
                         <button
                           key={i}
-                          onClick={() => sendMessage(q)}
-                          className="rounded-full border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                          onClick={() => sendMessage(q.question)}
+                          className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
                         >
-                          {q}
+                          <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <span>{q.question}</span>
+                          <span className="text-xs text-muted-foreground">{q.filename.replace(/\.pdf$/, "").replace(/^[A-Za-z]+_/, "")}</span>
                         </button>
-                      ))}
+                      ))}}
                     </div>
                   )}
                 </div>

@@ -17,7 +17,7 @@ import time
 from openai import OpenAI
 
 QUESTIONS_PER_DOC = 3
-MAX_RETURN = 5
+MAX_RETURN = 3
 LLM_DELAY = 1  # seconds between LLM calls to avoid rate limits
 
 GEN_PROMPT = """You are a document analyst. Given a sample of text from a document, generate {n} concise, natural questions that a user could ask about this document and that the document can answer.
@@ -26,9 +26,11 @@ Rules:
 - Each question must be answerable from the document content
 - Questions should be diverse (cover different aspects: amounts, dates, parties, terms, etc.)
 - Keep each question under 12 words
+- IMPORTANT: when the document name identifies a specific entity (company, supplier, type), include it in the question so it is unambiguous among similar documents in the same category. For example, prefer "What is the invoice number for CloudBridge?" over "What is the invoice number?"
 - Return ONLY the questions, one per line, no numbering, no quotes, no prefixes
 
 Document filename: {filename}
+Category: {categoria}
 Sample text:
 {sample}"""
 
@@ -45,29 +47,49 @@ def _fallback_questions(filename, n=QUESTIONS_PER_DOC):
     ][:n]
 
 
-def _generate_questions(ai_base_url, ai_api_key, ai_model, filename, sample):
-    """Call the LLM to generate questions from a document sample."""
+def _generate_questions(ai_base_url, ai_api_key, ai_model, filename, categoria, sample, retries=2):
+    """Call the LLM to generate questions from a document sample.
+
+    Returns (questions, debug_info). Retries once on empty response.
+    """
     client = OpenAI(base_url=ai_base_url, api_key=ai_api_key)
     prompt = GEN_PROMPT.format(
         n=QUESTIONS_PER_DOC,
         filename=filename,
-        sample=sample[:1500],
+        categoria=categoria,
+        sample=sample[:800],
     )
-    response = client.chat.completions.create(
-        model=ai_model,
-        messages=[{"role": "user", "content": prompt}],
-        stream=False,
-        max_tokens=200,
-        temperature=0.7,
-    )
-    text = response.choices[0].message.content.strip()
+    text = ""
+    for attempt in range(retries):
+        try:
+            response = client.chat.completions.create(
+                model=ai_model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                max_tokens=400,
+                temperature=0.7,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            if text:
+                break
+            time.sleep(1)
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(1)
+            else:
+                raise
     questions = [
         q.strip().lstrip("0123456789.-) ").strip()
         for q in text.splitlines()
         if q.strip()
     ]
     questions = [q for q in questions if len(q) > 5 and len(q) < 120]
-    return questions[:QUESTIONS_PER_DOC] or _fallback_questions(filename)
+    result = questions[:QUESTIONS_PER_DOC]
+    debug = {"raw": text[:200], "parsed": len(result)}
+    if not result:
+        result = _fallback_questions(filename)
+        debug["fallback"] = True
+    return result, debug
 
 
 def _get_cached_questions(conn, categoria):
@@ -150,9 +172,9 @@ def main(args, ctx=None):
                     time.sleep(LLM_DELAY)
                 try:
                     if ai_base_url and ai_api_key and ai_model:
-                        questions = _generate_questions(
+                        questions, _ = _generate_questions(
                             ai_base_url, ai_api_key, ai_model,
-                            filename, sample,
+                            filename, cat, sample,
                         )
                     else:
                         questions = _fallback_questions(filename)
