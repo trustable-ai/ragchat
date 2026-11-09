@@ -4,6 +4,8 @@ RAG Chat: Postgres fulltext search + LLM response generation.
 Uses ctx.POSTGRESQL. Schema (rag_documents) is owned by setup/database.
 """
 # re-zip trigger
+import re
+import string
 from openai import OpenAI
 
 
@@ -21,40 +23,190 @@ Rules:
 - Be concise and direct — answer first, then details"""
 
 
-def fulltext_search(conn, query, categoria="", top_k=15):
-    """Run fulltext search with OR logic and ILIKE fallback."""
-    words = query.split()
-    or_query = " | ".join(words)
+STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "with", "and", "or", "but",
+    "who", "what", "which", "where", "when", "why", "how",
+    "my", "your", "his", "her", "its", "our", "their",
+    "i", "you", "he", "she", "it", "we", "they",
+    "this", "that", "these", "those",
+    "do", "does", "did", "has", "have", "had",
+    "can", "could", "should", "would", "will", "shall",
+}
 
-    sql = """
-        SELECT filename, categoria, doc_id, chunk_index, content,
-               ts_rank(content_tsv, to_tsquery('english', %s)) AS rank
-        FROM rag_documents
-        WHERE content_tsv @@ to_tsquery('english', %s)
-        AND (categoria = %s OR %s = '')
+COLUMNS = "filename, categoria, doc_id, chunk_index, content, rank"
+
+
+def _normalize(text):
+    if not text:
+        return ""
+    text = text.lower()
+    text = re.sub(r"[" + re.escape(string.punctuation) + r"]", " ", text)
+    return " ".join(text.split())
+
+
+def _keywords(query):
+    tokens = _normalize(query).split()
+    if not tokens:
+        return [], []
+    stripped = [t for t in tokens if t not in STOPWORDS]
+    return tokens, stripped or tokens
+
+
+def _tier_tsvector(cur, words, categoria, top_k):
+    """Tier 1: fulltext with plainto_tsquery, 'simple' config."""
+    if not words:
+        return []
+    phrase = " ".join(words)
+    sql = f"""
+        SELECT {COLUMNS} FROM (
+            SELECT filename, categoria, doc_id, chunk_index, content,
+                   ts_rank_cd(content_tsv, plainto_tsquery('simple', %s)) AS rank
+            FROM rag_documents
+            WHERE content_tsv @@ plainto_tsquery('simple', %s)
+              AND (categoria = %s OR %s = '')
+        ) t
+        WHERE rank > 0
         ORDER BY rank DESC
         LIMIT %s
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, (or_query, or_query, categoria, categoria, top_k))
-        rows = cur.fetchall()
+    cur.execute(sql, (phrase, phrase, categoria, categoria, top_k))
+    return cur.fetchall()
 
-    # Fallback: ILIKE if fulltext finds nothing
-    if not rows:
-        like_pattern = "%" + "%".join(words) + "%"
-        sql2 = """
-            SELECT filename, categoria, doc_id, chunk_index, content, 0.5 AS rank
+
+def _tier_trigram(cur, stripped, categoria, top_k, threshold=0.2):
+    """Tier 2: pg_trgm word_similarity for typos/partial matches."""
+    if not stripped:
+        return []
+    phrase = " ".join(stripped)
+    sql = f"""
+        SELECT {COLUMNS} FROM (
+            SELECT filename, categoria, doc_id, chunk_index, content,
+                   word_similarity(%s, content) AS rank
             FROM rag_documents
-            WHERE content ILIKE %s
-            AND (categoria = %s OR %s = '')
-            ORDER BY created_at DESC
-            LIMIT %s
-        """
-        with conn.cursor() as cur:
-            cur.execute(sql2, (like_pattern, categoria, categoria, top_k))
-            rows = cur.fetchall()
+            WHERE word_similarity(%s, content) >= %s
+              AND (categoria = %s OR %s = '')
+        ) t
+        ORDER BY rank DESC
+        LIMIT %s
+    """
+    cur.execute(sql, (phrase, phrase, threshold, categoria, categoria, top_k))
+    return cur.fetchall()
 
-    return rows
+
+def _tier_ilike(cur, stripped, categoria, top_k):
+    if not stripped:
+        return []
+    conditions = " OR ".join(["content ILIKE %s" for _ in stripped])
+    params = [f"%{w}%" for w in stripped]
+    params += [categoria, categoria, top_k]
+    sql = f"""
+        SELECT {COLUMNS} FROM (
+            SELECT filename, categoria, doc_id, chunk_index, content, 0.3 AS rank
+            FROM rag_documents
+            WHERE ({conditions})
+              AND (categoria = %s OR %s = '')
+        ) t
+        LIMIT %s
+    """
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
+def _expand_adjacent(conn, hits, max_total):
+    """Fetch chunk_index ±1 around each hit, preserving relevance order.
+
+    Walks primary hits in blended-score order and appends each one's unseen
+    neighbors right after it, so the most relevant chunk stays first while its
+    context follows — instead of flattening by (doc_id, chunk_index), which
+    would destroy relevance ordering.
+    """
+    if not hits or max_total <= len(hits):
+        return hits[:max_total] if hits else hits
+    ranges = {}
+    for row in hits:
+        doc_id, chunk_index = row[2], row[3]
+        ranges.setdefault(doc_id, set()).update(
+            [chunk_index - 1, chunk_index, chunk_index + 1]
+        )
+    adjacent_by_doc = {}
+    sql = """
+        SELECT filename, categoria, doc_id, chunk_index, content, 0.0 AS rank
+        FROM rag_documents
+        WHERE doc_id = %s AND chunk_index = ANY(%s)
+    """
+    with conn.cursor() as cur:
+        for doc_id, idxs in ranges.items():
+            cur.execute(sql, (doc_id, sorted(idxs)))
+            for row in cur.fetchall():
+                adjacent_by_doc.setdefault(doc_id, {})[row[3]] = row
+    seen = set()
+    merged = []
+    for row in hits:
+        doc_id, chunk_index = row[2], row[3]
+        neighbors = adjacent_by_doc.get(doc_id, {})
+        for idx in sorted([chunk_index - 1, chunk_index, chunk_index + 1]):
+            key = (doc_id, idx)
+            if key in seen:
+                continue
+            seen.add(key)
+            if idx == chunk_index:
+                merged.append(row)
+            else:
+                neighbor = neighbors.get(idx)
+                if neighbor is not None:
+                    merged.append(neighbor)
+            if len(merged) >= max_total:
+                break
+        if len(merged) >= max_total:
+            break
+    return merged[:max_total]
+
+
+def rag_search(conn, query, categoria="", top_k=15, expand=True):
+    """Three-tier search (tsvector + trigram + ILIKE) with chunk expansion."""
+    tokens, stripped = _keywords(query)
+    if not tokens:
+        return []
+    results = {}
+    max_rank = {"ts": 1.0, "tri": 1.0}
+    with conn.cursor() as cur:
+        rows = _tier_tsvector(cur, stripped, categoria, top_k * 2)
+        if rows:
+            max_rank["ts"] = max(float(r[5]) for r in rows) or 1.0
+        for r in rows:
+            key = (r[2], r[3])
+            score = (float(r[5]) / max_rank["ts"]) if max_rank["ts"] else 0.0
+            results[key] = {"row": r, "score": score * 0.6}
+        rows = _tier_trigram(cur, stripped, categoria, top_k * 2)
+        if rows:
+            max_rank["tri"] = max(float(r[5]) for r in rows) or 1.0
+        for r in rows:
+            key = (r[2], r[3])
+            score = (float(r[5]) / max_rank["tri"]) if max_rank["tri"] else 0.0
+            if key in results:
+                results[key]["score"] += score * 0.3
+            else:
+                results[key] = {"row": r, "score": score * 0.3}
+        rows = _tier_ilike(cur, stripped, categoria, top_k)
+        for r in rows:
+            key = (r[2], r[3])
+            if key in results:
+                results[key]["score"] += 0.1
+            else:
+                results[key] = {"row": r, "score": 0.1}
+    if not results:
+        return []
+    ranked = sorted(results.values(), key=lambda v: v["score"], reverse=True)[:top_k]
+    hits = [tuple(list(v["row"])[:5] + [v["score"]]) for v in ranked]
+    if expand:
+        hits = _expand_adjacent(conn, hits, max_total=top_k * 3)
+    return hits
+
+
+def fulltext_search(conn, query, categoria="", top_k=15):
+    """Three-tier search with adjacent-chunk expansion (kept for compatibility)."""
+    return rag_search(conn, query, categoria, top_k, expand=True)
 
 
 def build_context(rows):

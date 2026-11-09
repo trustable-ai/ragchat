@@ -3,7 +3,22 @@ Store chunks in Postgres with tsvector fulltext search.
 
 Uses ctx.POSTGRESQL. Schema (rag_documents) is owned by setup/database.
 """
+import re
 import uuid
+
+
+def _normalize_filename(filename):
+    """Normalize a filename into a readable source label.
+
+    'Invoice_CloudBridge_102026.pdf' -> 'Invoice CloudBridge 1026'.
+    Strips directory, extension, and turns separators into spaces so the
+    label is tokenized correctly by tsvector/trigram/ILIKE.
+    """
+    name = filename or ""
+    name = name.rsplit("/", 1)[-1]
+    name = re.sub(r"\.(pdf|txt|docx?|csv|xlsx?)$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"[_-]+", " ", name)
+    return name.strip()
 
 
 def main(args, ctx=None):
@@ -57,6 +72,7 @@ def main(args, ctx=None):
             })
 
     conn = ctx.POSTGRESQL
+    source_label = _normalize_filename(filename)
     try:
         with conn.cursor() as cur:
             # Dedup: delete old chunks for same filename
@@ -65,8 +81,13 @@ def main(args, ctx=None):
                 (filename,)
             )
 
-            # Insert each chunk
+            # Insert each chunk. Prepend a 'Source: <label>' line so the
+            # filename is part of the searchable content: this lets queries by
+            # brand/name hit even when the body text does not mention it.
             for ch in normalized:
+                content = ch["content"]
+                if source_label:
+                    content = f"Source: {source_label}\n{content}"
                 cur.execute(
                     """INSERT INTO rag_documents
                        (filename, categoria, doc_id, chunk_index, total_chunks, content)
@@ -77,7 +98,7 @@ def main(args, ctx=None):
                         ch["doc_id"],
                         ch["chunk_index"],
                         ch["total_chunks"],
-                        ch["content"],
+                        content,
                     )
                 )
 
