@@ -42,7 +42,7 @@ class LLM:
             self.messages += self.context
 
     def welcome(self, args):
-        text = f"Welcome to TruGPT\nHost:{self.base_url}\nModel:{self.model}\n"
+        text = f"ragchat\nHost:{self.base_url}\nModel:{self.model}\n"
         text += f"RAG has #{len(self.instruct)} instructions.\n"
         return self.text(args, text)
 
