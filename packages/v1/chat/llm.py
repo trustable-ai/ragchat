@@ -27,7 +27,7 @@ class LLM:
         self.base_url  = args.get("AI_BASE_URL", os.getenv("AI_BASE_URL", "missing AI_BASE_URL"))
         self.api_key = args.get("AI_API_KEY", os.getenv("AI_API_KEY", "missing AI_API_KEY"))
         self.model = args.get("AI_CHAT_MODEL", os.getenv("AI_CHAT_MODEL", "missing AI_CHAT_MODEL"))
-        self.rate = 0.01
+        self.rate = float(args.get("STREAM_RATE", 0.01))
         # urls
         self.ai = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
@@ -73,7 +73,7 @@ class LLM:
 
     def _ask(self, inp):
         self.messages.append({"role": "user", "content": inp})
-        print("context: {len(self.context)}\ninstruct: {len(self.instruct)}\nnmessages: {len(self.messages)}")
+        print(f"context: {len(self.context)}\ninstruct: {len(self.instruct)}\nnmessages: {len(self.messages)}")
         stream = self.ai.chat.completions.create(
             model=self.model,
             messages=self.messages,
